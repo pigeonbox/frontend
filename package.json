@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@pigeonbox/frontend-core": "https://github.com/pigeonbox/frontend-core/releases/download/v0.1.8/pigeonbox-frontend-core-0.1.8.tgz"
+    "@pigeonbox/frontend-core": "https://github.com/pigeonbox/frontend-core/releases/download/v0.1.9/pigeonbox-frontend-core-0.1.9.tgz"
   },
   "devDependencies": {
     "@pigeonbox/contracts": "https://github.com/pigeonbox/contracts/releases/download/v0.10.1/pigeonbox-contracts-0.10.1.tgz",
