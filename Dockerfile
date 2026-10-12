@@ -18,6 +18,11 @@ COPY package.json package-lock.json* ./
 RUN npm ci --registry=${NPM_REGISTRY}
 COPY . .
 RUN npm run build
+# 版本戳自证(2026-10-12 版本幽灵根治):镜像产物必带 version.txt 且 dist 戳一致
+RUN V=$(node -p "require('./package.json').version") \
+ && printf '%s\n' "$V" > dist/version.txt \
+ && (grep -rqF "$V" dist/assets || { echo "✗ dist missing version stamp $V"; exit 1; }) \
+ && echo "version self-check OK: $V"
 
 # Stage 2: Runtime（uid/gid=101 非 root，监听 8080）
 FROM nginxinc/nginx-unprivileged:1.31-alpine
