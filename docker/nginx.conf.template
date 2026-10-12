@@ -56,7 +56,9 @@ server {
         image/svg+xml;
 
     # 通用反代头（location 内未覆写即继承）
-    proxy_set_header Host              $host;
+    # 必须 $http_host 而非 $host：后端按 Host 头推断公开 base（分享链接/预签回调），
+    # $host 丢端口，非 80/443 部署推断出的链接端口错（10.10.10.3 真机事故根因）
+    proxy_set_header Host              $http_host;
     proxy_set_header X-Real-IP         $remote_addr;
     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
