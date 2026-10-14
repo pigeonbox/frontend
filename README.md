@@ -8,6 +8,8 @@ release 发布的 [`ghcr.io/pigeonbox/frontend`](https://github.com/pigeonbox/fr
 nginx 静态镜像使用。公共应用全量(视图/stores/API/i18n/组件/单测)在
 [frontend-core](https://github.com/pigeonbox/frontend-core),以 Release 源码 tgz
 消费(`@pigeonbox/frontend-core`,与 `@pigeonbox/contracts` 同模式)。
+P2P 设备直传管理页(`P2pTransfer`)与系统配置的 P2P 分区同样由 frontend-core
+提供,壳保持零平台代码。
 
 ## 构建
 
