@@ -1,7 +1,7 @@
 {
   "name": "pigeonbox-frontend",
   "private": true,
-  "version": "3.3.30",
+  "version": "3.3.31",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@pigeonbox/frontend-core": "https://github.com/pigeonbox/frontend-core/releases/download/v0.11.23/pigeonbox-frontend-core-0.11.23.tgz"
+    "@pigeonbox/frontend-core": "https://github.com/pigeonbox/frontend-core/releases/download/v0.11.24/pigeonbox-frontend-core-0.11.24.tgz"
   },
   "devDependencies": {
     "@pigeonbox/contracts": "https://github.com/pigeonbox/contracts/releases/download/v0.18.7/pigeonbox-contracts-0.18.7.tgz",
