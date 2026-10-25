@@ -14,6 +14,28 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with: { node-version: "22", cache: npm }
       - run: npm ci
+      - name: 契约单一副本守卫（壳里必须只有一份 @pigeonbox/contracts）
+        run: |
+          set -euo pipefail
+          # 2026-10-25 实录（3.3.28 终验）：壳仓装出**两份** @pigeonbox/contracts ——
+          #   node_modules/@pigeonbox/contracts                            → 壳的钉版(0.18.7)
+          #   node_modules/@pigeonbox/frontend-core/node_modules/@pigeonbox/contracts → frontend-core 传递(0.18.6)
+          # npm 不去重不同版本 ⇒ frontend-core 源码的 `import type` 解析到 nested 那份
+          # ⇒ 壳里存在**两份类型定义**。本次 contracts 的 TS 载荷逐字节相同，所以
+          # typecheck 绿、页面正常 —— 但**下次 contracts 改 TS 载荷就会真炸**
+          # （壳里两份类型不兼容）。「没炸」不等于「对」。
+          #
+          # 根因与修法：库线(frontend-core)的 contracts 钉版必须与壳一致。
+          # 不一致时**先发 frontend-core 新版本把钉版抬齐**，再由列车 bump 抬壳的钉版
+          # （重打旧 tag 没用：npm 按版本号缓存 tgz 资产，只会喂陈旧 zip）。
+          n=$(find node_modules -type d -name contracts -path '*@pigeonbox*' | wc -l | tr -d ' ')
+          if [ "$n" -ne 1 ]; then
+            echo "::error::node_modules 里有 $n 份 @pigeonbox/contracts（必须恰好 1 份）:"
+            find node_modules -type d -name contracts -path '*@pigeonbox*' | sed 's|^|  |'
+            echo "::error::根因：frontend-core 的 contracts 钉版与壳不一致 ⇒ 先发 frontend-core 新版本把钉版抬齐"
+            exit 1
+          fi
+          echo "✓ @pigeonbox/contracts 单一副本"
       - name: Typecheck(壳+core 源)
         run: npm run typecheck
       # 应用单测在 frontend-core 仓 CI(core 携带全部视图/组件测试)
