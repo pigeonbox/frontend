@@ -70,13 +70,21 @@ server {
     # ── 流式通道：下载/分片/预签名 ──────────────────────────────
     # 须排在下方通用 API 正则之前：nginx 正则 location 按出现顺序首个命中生效。
     # 关闭缓冲（大文件不过 nginx 缓冲区）、放宽超时（慢速大传输）。
+    # ⚠️ proxy_send_timeout/proxy_read_timeout 是**两次 I/O 之间的间隔**超时，
+    # 不是整传总时长；client_body_timeout 是**读取客户端请求体两次读之间的间隔**
+    # 超时（nginx 默认 60s，是慢速上传更早的杀手）。公网慢速链路实测 ~0.86MB/s
+    # （200MB/243s）⇒ 1.35GB 级大文件若按 300s/60s 卡，PUT 必被 nginx 掐断
+    # （proxy_send_timeout 触发）⇒ 大文件上传被服务端单方面掐断。
+    # 统一放宽到 3600s（与 hub deploy/nginx/nginx.conf 同口径）。
     location ~ ^/(share/download|chunk/|api/v1/presign|anonymous/download) {
         proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT};
         proxy_buffering off;
         proxy_request_buffering off;   # 上传分片流式转发
         proxy_connect_timeout 15s;
-        proxy_send_timeout 300s;
-        proxy_read_timeout 300s;
+        client_body_timeout 3600s;
+        client_body_buffer_size 128k;
+        proxy_send_timeout 3600s;
+        proxy_read_timeout 3600s;      # 慢速大文件下载/上传；按网络放宽
     }
 
     # ── 其余 API：反代后端 ─────────────────────────────────────
