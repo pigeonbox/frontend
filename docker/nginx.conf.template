@@ -16,6 +16,27 @@ map $http_upgrade $connection_upgrade {
     ''      '';
 }
 
+# ── X-Forwarded-Proto 透传（issue #162，2026-11-10 真机复现）────────
+# 本容器有两种部署角色，$scheme 的语义完全不同：
+#   1) 自己终结 TLS（浏览器 → 本容器）：$scheme == https，天然正确；
+#   2) 位于 TLS 反代之后（TLS 终结器 → 本容器 8080 明文）：$scheme == http。
+#      旧模板无条件用 $scheme 覆写上游传来的 X-Forwarded-Proto: https
+#      ⇒ 后端看到 http ⇒ 会话 cookie 不带 Secure + 分享链接 base 推断成 http
+#      （10.10.10.3 升 5.7.0 真机复现：每个部署者都得在宿主侧 docker cp
+#        出来 sed 改模板再挂回容器）。
+# 修法：上游给了 X-Forwarded-Proto 就透传，没给（或值非法）才回落 $scheme
+#      ⇒ 直连部署行为与旧版逐字一致，无上游反代的场景零变化。
+#
+# 注：envsubst 只替换「已定义的环境变量」，$scheme / $http_x_forwarded_proto /
+#     $pb_forwarded_proto 都是 nginx 变量（非环境变量）⇒ 原样保留。
+#     故此处一律用 $var 裸变量写法，不要用带花括号的环境变量写法
+#     （花括号形式会被 envsubst 当环境变量名而误替换）。
+map $http_x_forwarded_proto $pb_forwarded_proto {
+    default                    $scheme;   # 无上游断言/值非法 ⇒ 回落本容器视角
+    '~*^https(\s*,.*)?$'       https;     # 上游断言 https（含链式 "https,http"）
+    '~*^http(\s*,.*)?$'        http;      # 上游断言 http
+}
+
 server {
     listen 8080;
     server_name _;
@@ -61,7 +82,7 @@ server {
     proxy_set_header Host              $http_host;
     proxy_set_header X-Real-IP         $remote_addr;
     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Proto $pb_forwarded_proto;
     proxy_http_version 1.1;
     # WebSocket 预留（后端当前无 WS 端点，保留头部无害）
     proxy_set_header Upgrade    $http_upgrade;
