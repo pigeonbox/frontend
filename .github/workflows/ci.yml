@@ -36,6 +36,43 @@ jobs:
             exit 1
           fi
           echo "✓ @pigeonbox/contracts 单一副本"
+      - name: nginx 模板守卫(X-Forwarded-Proto 不得裸用 $scheme)
+        run: |
+          set -euo pipefail
+          # issue #162（2026-11-10 真机复现，10.10.10.3 升 5.7.0）：
+          # 前端镜像 nginx 模板无条件用 $scheme 覆写 X-Forwarded-Proto。
+          # 本容器有两种部署角色，$scheme 的语义完全不同：
+          #   1) 自己终结 TLS（直连部署）：$scheme == https，裸用恰好正确；
+          #   2) 位于 TLS 反代之后（TLS 终结器 → 本容器 8080 明文）：$scheme == http
+          #      ⇒ 把上游传来的 https 覆写成 http ⇒ 后端会话 cookie 不带 Secure
+          #      + 分享链接 base 推断成 http（旧版每个部署者都得在宿主侧
+          #      docker cp 出来 sed 改模板再挂回容器）。
+          # 契约（机械守卫）：X-Forwarded-Proto 必须走
+          #   「上游 X-Forwarded-Proto → map → 缺省回落 $scheme」，
+          #   且不得出现裸的 $scheme 赋值。
+          tpl_dir="${TMPL_DIR:-docker}"
+          fail() { echo "::error::$*"; exit 1; }
+          for f in "$tpl_dir"/*.template; do
+            [ -e "$f" ] || continue
+            # ① 不得出现裸的 X-Forwarded-Proto $scheme 赋值（含 ${scheme} 等花括号写法）
+            #    注：判据用 [^;]*scheme 而非 \$\{?scheme\}? —— 后者在 BSD grep(macOS)
+            #    上不匹配（静默漏判），本仓本地复跑与 CI(GNU grep)须同一判据。
+            if grep -nE 'proxy_set_header[[:space:]]+X-Forwarded-Proto[[:space:]]+[^;]*scheme' "$f"; then
+              fail "$f 出现裸的 X-Forwarded-Proto \$scheme 赋值（issue #162：TLS 反代后会丢 https）"
+            fi
+            grep -q 'X-Forwarded-Proto' "$f" || continue
+            # ② 赋值目标必须是 map 派生变量，且该变量由 map $http_x_forwarded_proto 定义
+            var=$(sed -nE 's/^[[:space:]]*proxy_set_header[[:space:]]+X-Forwarded-Proto[[:space:]]+(\$[A-Za-z_][A-Za-z0-9_]*).*/\1/p' "$f" | head -1)
+            [ -n "$var" ] || fail "$f 的 X-Forwarded-Proto 未赋变量（须经 map 派生，不能写字面量）"
+            mapvar=$(sed -nE 's/^[[:space:]]*map[[:space:]]+\$http_x_forwarded_proto[[:space:]]+(\$[A-Za-z_][A-Za-z0-9_]*).*/\1/p' "$f" | head -1)
+            [ "$mapvar" = "$var" ] || fail "$f 的 X-Forwarded-Proto 变量 $var 未由 map \$http_x_forwarded_proto 定义（实得 $mapvar）"
+            # ③ 该 map 必须同时透传 http/https，且以 $scheme 兜底（直连部署行为不变）
+            block=$(sed -n '/^[[:space:]]*map[[:space:]]*\$http_x_forwarded_proto/,/^}/p' "$f")
+            echo "$block" | grep -q '\$scheme' || fail "$f 的 map $var 缺 \$scheme 兜底（无上游反代的直连部署行为会变）"
+            echo "$block" | grep -qE '(^|[[:space:]])https([[:space:]]|;|$)' || fail "$f 的 map $var 未透传 https"
+            echo "$block" | grep -qE '(^|[[:space:]])http([[:space:]]|;|$)' || fail "$f 的 map $var 未透传 http"
+          done
+          echo "✓ nginx 模板 X-Forwarded-Proto 守卫通过"
       - name: Typecheck(壳+core 源)
         run: npm run typecheck
       # 应用单测在 frontend-core 仓 CI(core 携带全部视图/组件测试)
