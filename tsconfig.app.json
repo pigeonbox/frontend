@@ -16,5 +16,16 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue", "node_modules/@pigeonbox/frontend-core/src/**/*.d.ts"]
+  /* frontend#170：壳 typecheck 必须把 tgz 的 views/router 拉进程序——
+     视图靠 router 惰性 import()，此前 include 只有 *.d.ts ⇒ router 不入程序
+     ⇒ 视图层（最大的一面）在壳侧零断言，发布物的视图没人把守。
+     __tests__ 排除：测试由 core 仓 CI 在本地源上全量跑，壳侧只把守发布物源码。 */
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.vue",
+    "node_modules/@pigeonbox/frontend-core/src/**/*.ts",
+    "node_modules/@pigeonbox/frontend-core/src/**/*.vue"
+  ],
+  "exclude": ["node_modules/@pigeonbox/frontend-core/src/**/__tests__/**"]
 }

@@ -75,6 +75,17 @@ jobs:
           echo "✓ nginx 模板 X-Forwarded-Proto 守卫通过"
       - name: Typecheck(壳+core 源)
         run: npm run typecheck
+      # frontend#170 覆盖守卫：tgz 的 views 必须真入 typecheck 程序——
+      # 此前 include 只有 *.d.ts ⇒ router 靠惰性 import 不入程序 ⇒ 视图层零断言，
+      # 收紧 include 后此处 n=0 即回归。--listFiles 与 typecheck 同配置同进程形态。
+      - name: Typecheck 覆盖守卫(tgz views 入程序)
+        run: |
+          n=$(node_modules/.bin/vue-tsc --noEmit -p tsconfig.app.json --listFiles 2>/dev/null | grep -c 'frontend-core/src/views/.*\.vue$' || true)
+          if [ "${n:-0}" -lt 1 ]; then
+            echo "::error::tgz views 未入 typecheck 程序(n=$n)——tsconfig.app.json include 回归(frontend#170)"
+            exit 1
+          fi
+          echo "✓ tgz views 入程序: $n 个 .vue"
       # 应用单测在 frontend-core 仓 CI(core 携带全部视图/组件测试)
       - name: Build neutral(server/docker 镜像 flavor)
         run: npm run build
