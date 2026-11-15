@@ -55,10 +55,16 @@ server {
     # new Function(输入=站点自有语言包,非用户输入;严格无 eval 会使 i18n
     # 全局崩溃白屏,2026-10-05 实测)。style-src unsafe-inline 予 Element
     # Plus;worker-src blob: 予 pdf.js。
+    #
+    # connect-src 由 CSP_CONNECT_SRC 注入（默认 'self'，Dockerfile ENV 兜底）：
+    # 浏览器预签名直传会把文件 PUT 到对象存储域名（S3/MinIO/OSS…），静态写死
+    # 'self' 会把它拦成 CSP violation —— curl 冒烟测不出来，只有真实浏览器才
+    # 复现（frontend#169）。用对象存储时把该变量设成 "'self' https://<存储域>"。
+    # ⚠️ 禁止填 * 或裸 http:（等于取消 connect-src 防线，门禁会拦）。
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src ${CSP_CONNECT_SRC}; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'" always;
 
 
     gzip on;
@@ -129,7 +135,7 @@ server {
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "SAMEORIGIN" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-            add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'" always;
+            add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src ${CSP_CONNECT_SRC}; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'" always;
 
         try_files $uri =404;
     }
@@ -142,7 +148,7 @@ server {
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "SAMEORIGIN" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-            add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'" always;
+            add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src ${CSP_CONNECT_SRC}; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'" always;
 
     }
 }
