@@ -103,3 +103,123 @@ jobs:
       # Dockerfile 可构建（nginx 模板/产物拷贝路径变更能被 PR 及时发现）
       - name: Docker build smoke
         run: docker build --build-arg NPM_REGISTRY=https://registry.npmjs.org -t pigeonbox-frontend:ci .
+      # frontend#169：CSP connect-src 支持注入 presign 直传跨源。
+      # presign 直传的 upload_url 有两种跨源形态（S3 预签名 URL / 后端 public base
+      # 与页面不同源），浏览器 XHR PUT 受 connect-src 管辖 ⇒ 只放行 'self' 时直传
+      # 整体失败；而冒烟用 curl、E2E 跑 vite dev（无 CSP 头）⇒ 两条路径都测不到
+      # 生产 nginx 的 CSP。故用**真实镜像入口**（官方 envsubst 渲染）+ 真实响应头断言。
+      # 断言点：① 缺省仍是旧语义（只 'self'，零行为变化）② 注入后三处 CSP 逐字一致
+      # ③ 占位符绝不漏进渲染结果（Dockerfile ENV 默认被删即红）④ 断言自证有牙齿。
+      - name: CSP connect-src 注入渲染断言(#169)
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          img="${IMG:-pigeonbox-frontend:ci}"
+          extra="https://s3.example.com https://minio.local:9000"
+          cid_def=""
+          cid_ext=""
+          cleanup() {
+            docker rm -f "$cid_def" "$cid_ext" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          wait_conf() {
+            cid="$1"
+            i=0
+            while [ "$i" -lt 60 ]; do
+              running=$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || echo false)
+              if [ "$running" != "true" ]; then
+                docker logs "$cid" 2>&1 | tail -30 || true
+                fail "$cid: 容器退出（nginx 配置错误?）"
+              fi
+              if docker exec "$cid" test -f /etc/nginx/conf.d/default.conf 2>/dev/null; then
+                return 0
+              fi
+              i=$((i + 1))
+              sleep 0.5
+            done
+            fail "$cid: 渲染产物 /etc/nginx/conf.d/default.conf 未生成"
+          }
+
+          wait_hdr() {
+            port="$1"
+            i=0
+            while [ "$i" -lt 60 ]; do
+              if curl -sfI "http://127.0.0.1:$port/" >/dev/null 2>&1; then
+                return 0
+              fi
+              i=$((i + 1))
+              sleep 0.5
+            done
+            fail ":$port 未就绪"
+          }
+
+          # 纯文本判据（可被自证复用）：0=通过 1=不通过
+          check_conf() {
+            label="$1"
+            want="$2"
+            conf="$3"
+            # 只盯 CSP 头行：模板注释里出现该变量名是正常的（文档），
+            # 真正的故障形态是 ${PB_CSP_CONNECT_SRC_EXTRA} 原样出现在 add_header 里。
+            if printf '%s\n' "$conf" | grep "add_header Content-Security-Policy" | grep -q 'PB_CSP_CONNECT_SRC_EXTRA'; then
+              echo "✗ $label: 占位符漏进 CSP 头（Dockerfile ENV 默认缺失/变量未定义）"
+              return 1
+            fi
+            n=$(printf '%s\n' "$conf" | grep -c "connect-src 'self'") || true
+            if [ "$n" -ne 3 ]; then
+              echo "✗ $label: connect-src 出现 $n 处（应恰好 3 处）"
+              return 1
+            fi
+            u=$(printf '%s\n' "$conf" | grep -o "connect-src[^;]*;" | sort -u | wc -l | tr -d ' ')
+            if [ "$u" -ne 1 ]; then
+              echo "✗ $label: 三处 connect-src 不一致"
+              return 1
+            fi
+            if ! printf '%s\n' "$conf" | grep -qF "$want"; then
+              echo "✗ $label: 期望 [$want]，实得 [$(printf '%s\n' "$conf" | grep -o "connect-src[^;]*;" | sort -u | tr '\n' ' ')]"
+              return 1
+            fi
+            return 0
+          }
+
+          # $1=标签 $2=期望 connect-src 片段(含分号) $3=cid $4=端口
+          assert_case() {
+            label="$1"
+            want="$2"
+            cid="$3"
+            port="$4"
+            conf=$(docker exec "$cid" cat /etc/nginx/conf.d/default.conf) || fail "$label: 读取渲染结果失败"
+            check_conf "$label" "$want" "$conf" || fail "$label: 渲染断言未过"
+            wait_hdr "$port"
+            hdr=$(curl -sI "http://127.0.0.1:$port/" | tr -d '\r' | grep -i '^content-security-policy:' | head -1)
+            case "$hdr" in
+              *"$want"*) ;;
+              *) fail "$label: 响应头未含期望 connect-src，实得 $hdr" ;;
+            esac
+            echo "✓ $label: $want"
+          }
+
+          # A 缺省（镜像 ENV 默认：变量已定义但为空）⇒ 必须仍是旧语义 'self' only
+          cid_def=$(docker run -d -p 18080:8080 "$img")
+          wait_conf "$cid_def"
+          assert_case "缺省(未注入)" "connect-src 'self' ;" "$cid_def" 18080
+
+          # B 注入对象存储/后端公开源（presign 跨域直传放行）
+          cid_ext=$(docker run -d -p 18081:8080 -e "PB_CSP_CONNECT_SRC_EXTRA=$extra" "$img")
+          wait_conf "$cid_ext"
+          assert_case "注入跨源" "connect-src 'self' $extra;" "$cid_ext" 18081
+
+          # ④ 自证（真路径）：unset 掉该变量后让**官方入口**重渲染一遍 —— 等价于
+          #    Dockerfile 的 ENV 默认被删 ⇒ 占位符原样漏进 CSP 头 ⇒ 同一判据必须判红
+          #    （仍绿 = 恒绿摆设）。用 unset 而非 docker run -e VAR：后者各版本对
+          #    「无值 -e」解释不一致（空串 vs 未定义），unset 语义确定。
+          conf_undef=$(docker run --rm --entrypoint sh "$img" -c '
+            unset PB_CSP_CONNECT_SRC_EXTRA
+            rm -f /etc/nginx/conf.d/default.conf
+            /docker-entrypoint.sh nginx -t >/dev/null 2>&1 || true
+            cat /etc/nginx/conf.d/default.conf
+          ')
+          if check_conf "自证(变量未定义)" "connect-src 'self' ;" "$conf_undef"; then
+            fail "断言自证失败：变量未定义（占位符漏进 CSP 头）的样本被判绿 ⇒ 门禁是恒绿摆设"
+          fi
+          echo "✓ 断言自证：变量未定义的样本判红"

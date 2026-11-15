@@ -20,6 +20,18 @@ npm run typecheck   # 壳 + core 源码类型检查
 npm run dev         # 开发服务器(API 代理 → localhost:12345,PB_API_TARGET 可覆盖)
 ```
 
+## 镜像运行时变量
+
+`BACKEND_HOST`/`BACKEND_PORT`/`CLIENT_MAX_BODY_SIZE`/`PB_CSP_CONNECT_SRC_EXTRA`
+由官方镜像入口 envsubst 渲染进 `docker/nginx.conf.template`（缺省值见 Dockerfile）。
+
+`PB_CSP_CONNECT_SRC_EXTRA`（frontend#169）：CSP `connect-src` 的**追加放行源**，
+空格分隔的 origin 列表（如 `https://s3.example.com https://minio:9000`），缺省为空
+⇒ 仍只放行 `'self'`（与旧行为一致）。presign 直传的 `upload_url` 跨源时必须注入
+（S3 预签名 URL，或后端 public base 与页面不同源），否则浏览器 XHR PUT 被 CSP 拦下、
+直传整体失败——冒烟走 curl、E2E 跑 vite dev，两条路径都测不到生产 nginx 的 CSP。
+只写 origin，别带路径、别写 `;`。断言见 CI「CSP connect-src 注入渲染断言」。
+
 ## 结构
 
 ```

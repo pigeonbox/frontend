@@ -28,10 +28,16 @@ RUN V=$(node -p "require('./package.json').version") \
 FROM nginxinc/nginx-unprivileged:1.31-alpine
 COPY --from=build /src/dist /usr/share/nginx/html
 COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
-# envsubst 默认值：独立/边车模式直连本机后端；k8s 由 chart 注入 Service DNS
+# envsubst 默认值：独立/边车模式直连本机后端；k8s 由 chart 注入 Service DNS。
+# PB_CSP_CONNECT_SRC_EXTRA 必须**始终有定义**（哪怕空串）：官方 envsubst 只替换
+# 「已定义」的环境变量，缺定义 ⇒ ${PB_CSP_CONNECT_SRC_EXTRA} 原样漏进 nginx 配置
+# ⇒ CSP 头里出现字面占位符（frontend#169 渲染断言会抓这个）。
+# 需要 presign 跨域直传（S3 预签名 / 后端 public base 与页面不同源）时注入：
+#   -e PB_CSP_CONNECT_SRC_EXTRA="https://s3.example.com https://minio:9000"
 ENV BACKEND_HOST=127.0.0.1 \
     BACKEND_PORT=12345 \
-    CLIENT_MAX_BODY_SIZE=8192m
+    CLIENT_MAX_BODY_SIZE=8192m \
+    PB_CSP_CONNECT_SRC_EXTRA=
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1
