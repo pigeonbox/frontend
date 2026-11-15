@@ -73,6 +73,51 @@ jobs:
             echo "$block" | grep -qE '(^|[[:space:]])http([[:space:]]|;|$)' || fail "$f 的 map $var 未透传 http"
           done
           echo "✓ nginx 模板 X-Forwarded-Proto 守卫通过"
+      - name: nginx 模板守卫(CSP connect-src 必须可注入 · frontend#169)
+        run: |
+          set -euo pipefail
+          # 预签名直传：浏览器把文件 PUT 到对象存储域名（S3/MinIO/OSS…）。模板若把
+          # connect-src 写死 'self' ⇒ 跨域 PUT 被 CSP 拦成 violation，而 curl 冒烟
+          # **完全测不出**（只有真实浏览器执行 CSP）⇒ 必须能在部署侧注入存储域。
+          # 契约：三处 CSP（server 级 / /assets/ / SPA 回退）都用 ${CSP_CONNECT_SRC}
+          # 注入；Dockerfile 给默认值 'self'；任何地方不得放宽成 *。
+          tpl="docker/nginx.conf.template"
+          fail() { echo "::error::$*"; exit 1; }
+          [ -f "$tpl" ] || fail "缺 $tpl"
+
+          check_tpl() { # $1 = 模板文件；通过返回 0
+            f="$1"
+            n=$(grep -c "Content-Security-Policy" "$f")
+            [ "${n:-0}" -ge 3 ] || return 1
+            inj=$(grep -cF 'connect-src ${CSP_CONNECT_SRC};' "$f")
+            [ "${inj:-0}" -eq "$n" ] || return 1
+            ! grep -qF "connect-src 'self';" "$f" || return 1
+            ! grep -qE "connect-src[^;\"]*\*" "$f" || return 1
+            return 0
+          }
+
+          check_tpl "$tpl" || fail "$tpl 的 CSP 不符契约（三处 CSP 都必须 connect-src 用 CSP_CONNECT_SRC 注入；不得写死 'self' 或出现 *）"
+          csp_n=$(grep -c "Content-Security-Policy" "$tpl")
+
+          # Dockerfile 必须给默认值，否则 envsubst 在未注入时留下字面量 ${CSP_CONNECT_SRC}
+          grep -qE 'CSP_CONNECT_SRC=' Dockerfile || fail "Dockerfile 未给 CSP_CONNECT_SRC 默认值（envsubst 会留下未替换的占位符）"
+          grep -E 'CSP_CONNECT_SRC=' Dockerfile | grep -qF '*' && fail "Dockerfile 的 CSP_CONNECT_SRC 默认值含 *（等于取消该防线）"
+
+          # 渲染级自证：注入存储域后，每一处 CSP 都要带上它
+          rendered=$(CSP_CONNECT_SRC="'self' https://minio.example.com" \
+            envsubst '${BACKEND_HOST} ${BACKEND_PORT} ${CLIENT_MAX_BODY_SIZE} ${CSP_CONNECT_SRC}' < "$tpl")
+          got=$(printf '%s' "$rendered" | grep -cF "connect-src 'self' https://minio.example.com;")
+          [ "${got:-0}" -eq "$csp_n" ] || fail "渲染后只有 ${got:-0}/${csp_n} 处 CSP 带上了注入域（注入链断了）"
+
+          # 变异自证：把注入改回写死 'self' ⇒ 判据必须转红（防门禁空转）
+          mut=$(mktemp)
+          sed "s/connect-src \${CSP_CONNECT_SRC};/connect-src 'self';/g" "$tpl" > "$mut"
+          if check_tpl "$mut"; then
+            rm -f "$mut"
+            fail "变异自证失败：写死 'self' 的模板仍判绿（判据没生效）"
+          fi
+          rm -f "$mut"
+          echo "✓ CSP connect-src 注入守卫通过（${csp_n} 处）"
       - name: Typecheck(壳+core 源)
         run: npm run typecheck
       # frontend#170 覆盖守卫：tgz 的 views 必须真入 typecheck 程序——
